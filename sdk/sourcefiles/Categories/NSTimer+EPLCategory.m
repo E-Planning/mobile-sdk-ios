@@ -1,0 +1,73 @@
+/*   Copyright 2013 APPNEXUS INC
+ 
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+ 
+ http://www.apache.org/licenses/LICENSE-2.0
+ 
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF EPLY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+ */
+
+#import "NSTimer+EPLCategory.h"
+
+#import "EPLLogging.h"
+
+@implementation NSTimer (EPLCategory)
+
+- (BOOL)an_isScheduled
+{
+    CFRunLoopRef runLoopRef = [[NSRunLoop currentRunLoop] getCFRunLoop];
+    return CFRunLoopContainsTimer(runLoopRef, (__bridge CFRunLoopTimerRef)self, kCFRunLoopDefaultMode);
+}
+
+- (void)an_scheduleNow
+{
+    EPLLogDebug(@"Scheduled timer (%p) with interval %.0f.", self,
+               [self.fireDate timeIntervalSinceNow]);
+	[[NSRunLoop currentRunLoop] addTimer:self forMode:NSDefaultRunLoopMode];
+    
+    BOOL isScheduled = [self an_isScheduled];
+    
+    if (isScheduled)
+    {
+        EPLLogInfo(@"[NSTimer scheduleNow] %@ is scheduled", self);
+    }
+}
+
++ (NSTimer *)an_scheduledTimerWithTimeInterval:(NSTimeInterval)interval
+                                         block:(void (^)(void))block
+                                       repeats:(BOOL)repeats {
+    return [self scheduledTimerWithTimeInterval:interval
+                                         target:self
+                                       selector:@selector(an_runBlockWithTimer:)
+                                       userInfo:[block copy]
+                                        repeats:repeats];
+}
+
++ (void)an_runBlockWithTimer:(NSTimer *)timer {
+    void (^block)(void) = timer.userInfo;
+    if (block) {
+        block();
+    }
+}
+
++ (NSTimer *)an_scheduledTimerWithTimeInterval:(NSTimeInterval)interval
+                                         block:(void (^)(void))block
+                                       repeats:(BOOL)repeats
+                                          mode:(NSRunLoopMode)mode {
+    NSTimer *timer = [self timerWithTimeInterval:interval
+                                          target:self
+                                        selector:@selector(an_runBlockWithTimer:)
+                                        userInfo:[block copy]
+                                         repeats:repeats];
+    [[NSRunLoop currentRunLoop] addTimer:timer
+                                 forMode:mode];
+    return timer;
+}
+
+@end

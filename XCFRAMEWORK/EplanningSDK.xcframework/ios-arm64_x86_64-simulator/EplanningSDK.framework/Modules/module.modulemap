@@ -1,0 +1,6 @@
+framework module EplanningSDK {
+  umbrella header "EplanningSDK.h"
+  export *
+
+  module * { export * }
+}

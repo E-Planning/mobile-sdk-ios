@@ -1,0 +1,536 @@
+/*   Copyright 2016 APPNEXUS INC
+ 
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+ 
+ http://www.apache.org/licenses/LICENSE-2.0
+ 
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF EPLY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
+ */
+
+#import "EPLInstreamVideoAd.h"
+#import "EPLVideoAdPlayer.h"
+#import "EPLAdFetcher.h"
+#import "EPLLogging.h"
+#import "EPLAdView+PrivateMethods.h"
+#import "EPLOMIDImplementation.h"
+#import "EPLMultiAdRequest+PrivateMethods.h"
+
+
+
+//---------------------------------------------------------- -o--
+NSString * const  exceptionCategoryAPIUsageErr  = @"API usage err.";
+
+
+
+
+//---------------------------------------------------------- -o--
+@interface  EPLInstreamVideoAd()  <EPLVideoAdPlayerDelegate, EPLAdFetcherFoundationDelegate, EPLAdProtocol>
+
+@property  (weak, nonatomic, readwrite, nullable)  id<EPLInstreamVideoAdPlayDelegate>  playDelegate;
+
+@property (nonatomic, strong)  EPLVideoAdPlayer  *adPlayer;
+@property (nonatomic, strong)  UIView           *adContainer;
+
+//
+@property (strong, nonatomic, readwrite, nullable)  NSString  *descriptionOfFailure;
+@property (strong, nonatomic, readwrite, nullable)  NSError   *failureNSError;
+
+@property (nonatomic)  BOOL  didUserSkipAd;
+@property (nonatomic)  BOOL  didUserClickAd;
+@property (nonatomic)  BOOL  isAdMuted;
+@property (nonatomic)  BOOL  isVideoTagReady;
+@property (nonatomic)  BOOL  didVideoTagFail;
+@property (nonatomic)  BOOL  isAdPlaying;
+
+//
+@property (nonatomic, strong)  NSMutableSet<NSValue *>  *allowedAdSizes;
+
+@end
+
+
+
+
+//---------------------------------------------------------- -o--
+@implementation EPLInstreamVideoAd
+
+@synthesize  minDuration        = __minDuration;
+@synthesize  maxDuration        = __maxDuration;
+
+
+
+#pragma mark - Lifecycle.
+
+//--------------------- -o-
+- (instancetype) initFoundation
+{
+    self = [super init];
+    if (!self)  { return nil; }
+    
+    //
+    self.isAdPlaying      = NO;
+    self.didUserSkipAd    = NO;
+    self.didUserClickAd   = NO;
+    self.isAdMuted        = NO;
+    self.isVideoTagReady  = NO;
+    self.didVideoTagFail  = NO;
+
+    self.clickThroughAction = EPLClickThroughActionOpenSDKBrowser;
+    self.landingPageLoadsInBackground = YES;
+    
+    self.adFetcher = [[EPLAdFetcher alloc] initWithDelegate:self];
+    
+    [self setupSizeParametersAs1x1];
+    [[EPLOMIDImplementation sharedInstance] activateOMIDandCreatePartner];
+    
+    return self;
+}
+
+- (nonnull instancetype) initWithPlacementId: (nonnull NSString *)placementId
+{
+    self = [self initFoundation];
+    if (!self)  { return nil; }
+
+    //
+    self.placementId = placementId;
+
+    return  self;
+}
+
+- (nonnull instancetype) initWithMemberId:(NSInteger)memberId inventoryCode:(nonnull NSString *)inventoryCode
+{
+    self = [self initFoundation];
+    if (!self)  { return nil; }
+
+    //
+    [self setInventoryCode:inventoryCode memberId:memberId];
+
+    return  self;
+}
+
+- (void) setupSizeParametersAs1x1
+{
+    self.allowedAdSizes     = [NSMutableSet setWithObject:[NSValue valueWithCGSize:kANAdSize1x1]];
+    self.allowSmallerSizes  = NO;
+}
+
+
+
+
+//---------------------------------------------------------- -o--
+#pragma mark - Instance methods.
+
+//--------------------- -o-
+- (BOOL) loadAdWithDelegate: (nullable id<EPLInstreamVideoAdLoadDelegate>)loadDelegate;
+{
+    if (! loadDelegate) {
+        EPLLogWarn(@"loadDelegate is UNDEFINED.  EPLInstreamVideoAdLoadDelegate allows detection of when a video ad is successfully received and loaded.");
+    }
+    
+    self.loadDelegate = loadDelegate;
+    
+    if(self.adFetcher != nil){
+        
+        [self.adFetcher requestAd];
+        
+    } else {
+        EPLLogError(@"FAILED TO FETCH video ad.");
+        return  NO;
+    }
+    
+    return  YES;
+}
+
+
+//--------------------- -o-
+- (void) playAdWithContainer: (nonnull UIView *)adContainer
+                withDelegate: (nullable id<EPLInstreamVideoAdPlayDelegate>)playDelegate;
+{
+    if (!playDelegate) {
+        EPLLogError(@"playDelegate is UNDEFINED.  EPLInstreamVideoAdPlayDelegate allows the lifecycle of a video ad to be tracked, including when the video ad is completed.");
+        return;
+    }
+    
+    self.playDelegate = playDelegate;
+    
+    [self.adPlayer playAdWithContainer:adContainer];
+}
+
+
+//--------------------- -o-
+- (void) pauseAd
+{
+    if(self.adPlayer != nil){
+        [self.adPlayer pauseAdVideo];
+    }
+        
+}
+
+- (void) resumeAd
+{
+    if(self.adPlayer != nil){
+        [self.adPlayer resumeAdVideo];
+    }
+}
+
+- (void) removeAd
+{
+    if(self.adPlayer != nil){
+        [self.adPlayer removePlayer];
+        [self.adPlayer removeFromSuperview];
+        self.adPlayer.delegate = nil;
+        self.adPlayer = nil;
+    }
+}
+
+-(NSUInteger) getAdDuration {
+    return [self.adPlayer getAdDuration];
+}
+
+- (nullable NSString *) getCreativeURL{
+    return [self.adPlayer getCreativeURL];
+}
+
+- (nullable NSString *) getVastURL {
+    return [self.adPlayer getVASTURL];
+}
+
+- (nullable NSString *) getVastXML {
+    return [self.adPlayer getVASTXML];
+}
+
+- (EPLVideoOrientation) getVideoOrientation {
+    return [self.adPlayer getVideoOrientation];
+}
+
+- (NSUInteger) getAdPlayElapsedTime {
+    return [self.adPlayer getAdPlayElapsedTime];
+}
+
+
+
+//---------------------------------------------------------- -o--
+#pragma mark - EPLVideoAdPlayerDelegate.
+
+-(void) videoAdReady
+{
+    self.isVideoTagReady = YES;
+    
+    if ([self.loadDelegate respondsToSelector:@selector(adDidReceiveAd:)]) {
+        [self.loadDelegate adDidReceiveAd:self];
+    }
+}
+
+-(void) videoAdLoadFailed:(nonnull NSError *)error withAdResponseInfo:(EPLAdResponseInfo *)adResponseInfo
+{
+    self.didVideoTagFail = YES;
+    
+    self.descriptionOfFailure  = nil;
+    self.failureNSError        = error;
+    
+    [self setAdResponseInfo:adResponseInfo];
+
+    EPLLogError(@"Delegate indicates FAILURE.");
+    [self removeAd];
+    
+    if ([self.loadDelegate respondsToSelector:@selector(ad:requestFailedWithError:)]) {
+        [self.loadDelegate ad:self requestFailedWithError:self.failureNSError];
+    }
+}
+
+-(void) videoAdPlayFailed:(NSError *)error
+{
+    self.didVideoTagFail = YES;
+    
+    if ([self.playDelegate respondsToSelector:@selector(adDidComplete:withState:)])  {
+        [self.playDelegate adDidComplete:self withState:EPLInstreamVideoPlaybackStateError];
+    }
+    
+    [self removeAd];
+}
+
+- (void) videoAdError:(nonnull NSError *)error
+{
+    self.descriptionOfFailure  = nil;
+    self.failureNSError        = error;
+    
+    if ([self.playDelegate respondsToSelector:@selector(adDidComplete:withState:)]) {
+        [self.playDelegate adDidComplete:self withState:EPLInstreamVideoPlaybackStateError];
+    }
+}
+
+
+- (void) videoAdWillPresent:(nonnull EPLVideoAdPlayer *)videoAd
+{
+    if ([self.playDelegate respondsToSelector:@selector(adWillPresent:)]) {
+        [self.playDelegate adWillPresent:self];
+    }
+}
+
+- (void) videoAdDidPresent:(nonnull EPLVideoAdPlayer *)videoAd
+{
+    if ([self.playDelegate respondsToSelector:@selector(adDidPresent:)]) {
+        [self.playDelegate adDidPresent:self];
+    }
+}
+
+
+- (void) videoAdWillClose:(nonnull EPLVideoAdPlayer *)videoAd
+{
+    if ([self.playDelegate respondsToSelector:@selector(adWillClose:)]) {
+        [self.playDelegate adWillClose:self];
+    }
+}
+
+- (void) videoAdDidClose:(nonnull EPLVideoAdPlayer *)videoAd
+{
+    if ([self.playDelegate respondsToSelector:@selector(adDidClose:)]) {
+        [self removeAd];
+        [self.playDelegate adDidClose:self];
+    }
+}
+
+
+- (void) videoAdWillLeaveApplication:(nonnull EPLVideoAdPlayer *)videoAd
+{
+    if ([self.playDelegate respondsToSelector:@selector(adWillLeaveApplication:)])  {
+        [self.playDelegate adWillLeaveApplication:self];
+    }
+}
+
+
+-(void) videoAdImpressionListeners:(EPLVideoAdPlayerTracker)tracker
+{
+    switch (tracker) {
+        case EPLVideoAdPlayerTrackerFirstQuartile:
+            if ([self.playDelegate respondsToSelector:@selector(adCompletedFirstQuartile:)]) {
+                [self.playDelegate adCompletedFirstQuartile:self];
+            }
+            break;
+        case EPLVideoAdPlayerTrackerMidQuartile:
+            if ([self.playDelegate respondsToSelector:@selector(adCompletedMidQuartile:)]) {
+                [self.playDelegate adCompletedMidQuartile:self];
+            }
+            break;
+        case EPLVideoAdPlayerTrackerThirdQuartile:
+            if ([self.playDelegate respondsToSelector:@selector(adCompletedThirdQuartile:)]) {
+                [self.playDelegate adCompletedThirdQuartile:self];
+            }
+            break;
+        case EPLVideoAdPlayerTrackerFourthQuartile:
+            if ([self.playDelegate respondsToSelector:@selector(adDidComplete:withState:)]) {
+                [self removeAd];
+                [self.playDelegate adDidComplete:self withState:EPLInstreamVideoPlaybackStateCompleted];
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+
+-(void) videoAdEventListeners:(EPLVideoAdPlayerEvent)eventTrackers
+{
+    switch (eventTrackers) {
+        case EPLVideoAdPlayerEventPlay:
+            self.isAdPlaying = YES;
+            if ([self.playDelegate respondsToSelector:@selector(adPlayStarted:)])  {
+                [self.playDelegate adPlayStarted:self];
+            }
+            break;
+        case EPLVideoAdPlayerEventSkip:
+            self.didUserSkipAd = YES;
+            
+            if([self.playDelegate respondsToSelector:@selector(adDidComplete:withState:)]){
+                [self.playDelegate adDidComplete:self withState:EPLInstreamVideoPlaybackStateSkipped];
+            }
+            break;
+
+        case EPLVideoAdPlayerEventMuteOn:
+            self.isAdMuted = YES;
+            
+            if ([self.playDelegate respondsToSelector:@selector(adMute:withStatus:)])  {
+                [self.playDelegate adMute:self withStatus:self.isAdMuted];
+            }
+            break;
+        case EPLVideoAdPlayerEventMuteOff:
+            self.isAdMuted = NO;
+            
+            if ([self.playDelegate respondsToSelector:@selector(adMute:withStatus:)])  {
+                [self.playDelegate adMute:self withStatus:self.isAdMuted];
+            }
+            break;
+        default:
+            break;
+    }
+}
+
+
+- (void) videoAdWasClicked {
+    self.didUserClickAd = YES;
+
+    if ([self.playDelegate respondsToSelector:@selector(adWasClicked:)])  {
+        [self.playDelegate adWasClicked:self];
+    }
+}
+
+- (void) videoAdWasClickedWithURL:(nonnull NSString *)urlString {
+    self.didUserClickAd = YES;
+
+    if ([self.playDelegate respondsToSelector:@selector(adWasClicked:withURL:)])  {
+        [self.playDelegate adWasClicked:self withURL:urlString];
+    }
+}
+
+- (BOOL) videoAdPlayerLandingPageLoadsInBackground  {
+    return  self.landingPageLoadsInBackground;
+}
+
+- (EPLClickThroughAction) videoAdPlayerClickThroughAction {
+    return  self.clickThroughAction;
+}
+
+- (void)addOpenMeasurementFriendlyObstruction:(nonnull UIView *)obstructionView{
+    [super addOpenMeasurementFriendlyObstruction:obstructionView];
+    [self setFriendlyObstruction];
+}
+
+- (void)setFriendlyObstruction
+{
+    if(self.adPlayer != nil && self.adPlayer.omidAdSession != nil){
+        for (UIView *obstructionView in self.obstructionViews){
+            [[EPLOMIDImplementation sharedInstance] addFriendlyObstruction:obstructionView toOMIDAdSession:self.adPlayer.omidAdSession];
+        }
+    }
+}
+
+- (void)removeOpenMeasurementFriendlyObstruction:(UIView *)obstructionView{
+    if( [self.obstructionViews containsObject:obstructionView]){
+        [super removeOpenMeasurementFriendlyObstruction:obstructionView];
+        if(self.adPlayer != nil && self.adPlayer.omidAdSession != nil){
+            [[EPLOMIDImplementation sharedInstance] removeFriendlyObstruction:obstructionView toOMIDAdSession:self.adPlayer.omidAdSession];
+        }
+    }
+}
+
+- (void)removeAllOpenMeasurementFriendlyObstructions{
+        [super removeAllOpenMeasurementFriendlyObstructions];
+        if(self.adPlayer != nil && self.adPlayer.omidAdSession != nil){
+            [[EPLOMIDImplementation sharedInstance] removeAllFriendlyObstructions:self.adPlayer.omidAdSession];
+        }
+}
+
+
+//---------------------------------------------------------- -o--
+#pragma mark - EPLUniversalAdFetcherDelegate.
+
+- (void)       adFetcher: (EPLAdFetcher *)fetcher
+     didFinishRequestWithResponse: (EPLAdFetcherResponse *)response
+{
+    if ([response.adObject isKindOfClass:[EPLVideoAdPlayer class]]) {
+        self.adPlayer = (EPLVideoAdPlayer *) response.adObject;
+        self.adPlayer.delegate = self;
+        
+        EPLAdResponseInfo *adResponseInfo  = (EPLAdResponseInfo *) [EPLGlobal valueOfGetterProperty:kANAdResponseInfo forObject:response.adObjectHandler];
+        if (adResponseInfo) {
+            [self setAdResponseInfo:adResponseInfo];
+        }
+        
+        [self setFriendlyObstruction];
+
+        [self videoAdReady];
+
+        
+    }else if(!response.isSuccessful && (response.adObject == nil)){
+        [self videoAdLoadFailed:EPLError(@"video_adfetch_failed", EPLAdResponseCode.BAD_FORMAT.code) withAdResponseInfo:response.adResponseInfo];
+        return;
+    }
+}
+
+- (NSArray<NSValue *> *)adAllowedMediaTypes
+{
+    EPLLogTrace(@"");
+    return  @[ @(EPLAllowedMediaTypeVideo) ];
+    
+}
+
+- (NSDictionary *) internalDelegateUniversalTagSizeParameters
+{
+    NSMutableDictionary  *delegateReturnDictionary  = [[NSMutableDictionary alloc] init];
+    [delegateReturnDictionary setObject:[NSValue valueWithCGSize:kANAdSize1x1]  forKey:EPLInternalDelgateTagKeyPrimarySize];
+    [delegateReturnDictionary setObject:self.allowedAdSizes                     forKey:EPLInternalDelegateTagKeySizes];
+    [delegateReturnDictionary setObject:@(self.allowSmallerSizes)               forKey:EPLInternalDelegateTagKeyAllowSmallerSizes];
+    
+    return  delegateReturnDictionary;
+}
+
+- (EPLVideoAdSubtype) videoAdTypeForAdFetcher:(EPLAdFetcher *)fetcher {
+    return  EPLVideoAdSubtypeInstream;
+}
+
+
+
+//---------------------------------------------------------- -o--
+#pragma mark - EPLAdProtocol.
+
+/** Set the user's current location.  This allows ad buyers to do location targeting, which can increase spend.
+ */
+- (void)setLocationWithLatitude:(CGFloat)latitude longitude:(CGFloat)longitude
+                      timestamp:(nullable NSDate *)timestamp horizontalAccuracy:(CGFloat)horizontalAccuracy {
+    self.location = [EPLLocation getLocationWithLatitude:latitude
+                                              longitude:longitude
+                                              timestamp:timestamp
+                                     horizontalAccuracy:horizontalAccuracy];
+}
+
+/** Set the user's current location rounded to the number of decimal places specified in "precision".
+ Valid values are between 0 and 6 inclusive. If the precision is -1, no rounding will occur.
+ */
+- (void)setLocationWithLatitude:(CGFloat)latitude longitude:(CGFloat)longitude
+                      timestamp:(nullable NSDate *)timestamp horizontalAccuracy:(CGFloat)horizontalAccuracy
+                      precision:(NSInteger)precision {
+    self.location = [EPLLocation getLocationWithLatitude:latitude
+                                              longitude:longitude
+                                              timestamp:timestamp
+                                     horizontalAccuracy:horizontalAccuracy
+                                              precision:precision];
+}
+
+
+/**
+ Set the inventory code and member id for the place that ads will be shown.
+ */
+@synthesize  memberId       = _memberId;
+@synthesize  inventoryCode  = _inventoryCode;
+
+- (void)setInventoryCode: (nullable NSString *)newInventoryCode
+                memberId: (NSInteger)newMemberID
+{
+    if ((newMemberID > 0) && self.marManager)
+    {
+        if (self.marManager.memberId != newMemberID) {
+            EPLLogError(@"Arguments ignored because newMemberId (%@) is not equal to memberID used in Multi-Ad Request.", @(newMemberID));
+            return;
+        }
+    }
+
+    //
+    if (newInventoryCode && ![newInventoryCode isEqualToString:_inventoryCode]) {
+        EPLLogDebug(@"Setting inventory code to %@", newInventoryCode);
+        _inventoryCode = newInventoryCode;
+    }
+    if ( (newMemberID > 0) && (newMemberID != _memberId) ) {
+        EPLLogDebug(@"Setting member id to %d", (int) newMemberID);
+        _memberId = newMemberID;
+    }
+}
+
+
+
+@end
+
