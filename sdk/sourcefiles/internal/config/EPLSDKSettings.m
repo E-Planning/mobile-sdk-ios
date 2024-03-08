@@ -50,9 +50,9 @@
 
 -(NSString *) utAdRequestBaseUrl {
     if(EPLGDPRSettings.canAccessDeviceData == NO || EPLSDKSettings.sharedInstance.doNotTrack == YES){
-        return @"https://dibu-m1ny231s8-fndigrazias-projects.vercel.app/mob/3";
+        return @"https://ads.us.e-planning.net/mob/3";
     }
-    return @"https://dibu-m1ny231s8-fndigrazias-projects.vercel.app/mob/3";
+    return @"https://ads.us.e-planning.net/mob/3";
 }
 
 - (NSURL *) videoWebViewUrl
